@@ -188,9 +188,12 @@ void *mm_realloc(void *bp, size_t size)
     }
 
     // Check if the adjacent block on the right side is free
-    void *pAdjacentBlock = NEXT_BLKP(bp);
-    if(!GET_ALLOC(HDRP(pAdjacentBlock))) {
-        size_t capacity = outdatedSize + GET_SIZE(HDRP(pAdjacentBlock));
+    /*
+    Idea for future improvement: choose better one when left and right side are both free
+    */
+    void *pRightAdjacentBlock = NEXT_BLKP(bp);
+    if(!GET_ALLOC(HDRP(pRightAdjacentBlock))) {
+        size_t capacity = outdatedSize + GET_SIZE(HDRP(pRightAdjacentBlock));
         if(capacity >= adjustedSize) {
             PUT(HDRP(bp), PACK(capacity, 1));
             PUT(FTRP(bp), PACK(capacity, 1));
