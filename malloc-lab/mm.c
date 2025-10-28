@@ -329,25 +329,36 @@ void *mm_realloc(void *bp, size_t size)
     return newbp;
 }
 
-/* Find-fit over segregated lists:
- * - 요청 크기의 group부터 위로 올라가며 검색
- * - 같은 group 내에서는 first-fit (원하면 best-in-group으로 바꿔도 됨)
+/* Best-fit over segregated lists:
+ * - 요청 크기의 group부터 위로 올라가며 모든 후보를 스캔
+ * - waste(= 블록크기 - asize)가 가장 작은 블록을 선택
+ * - 완벽 일치(gsize == asize)를 찾으면 즉시 반환
  */
 static void *find_fit(size_t asize)
 {
-    int group = size_to_group(asize);
+    int start = size_to_group(asize);
 
-    for (int i = group; i < NLISTS; ++i) {
+    void *best_bp = NULL;
+    size_t best_waste = (size_t)-1;  /* 가장 작은 낭비를 추적 */
+
+    for (int i = start; i < NLISTS; ++i) {
         for (char *bp = headers[i]; bp != NULL; bp = GET_SUCC(bp)) {
             size_t gsize = GET_SIZE(HDRP(bp));
             if (gsize >= asize) {
-                /* 같은 group에서 정확히 맞으면 조기 종료(분할 오버헤드 최소화) */
-                /* if (gsize == asize) return bp;  // 선택 사항 */
-                return bp;
+                size_t waste = gsize - asize;
+                if (waste == 0) {
+                    /* 완벽 일치: 더 볼 필요 없음 */
+                    return bp;
+                }
+                if (waste < best_waste) {
+                    best_waste = waste;
+                    best_bp = bp;
+                }
             }
         }
     }
-    return NULL;
+
+    return best_bp; /* 없으면 NULL */
 }
 
 static void place(void *bp, size_t asize)
