@@ -87,8 +87,47 @@ static void  insert_node(void *bp);
 static void  remove_node(void *bp);
 static int   size_to_group(size_t size);
 
-/* policy helpers */
 static size_t getFreeSizeOfTail(void);
+void mm_checkheap(int lineno);
+
+void mm_heapdump(const char *tag, int opnum, int index, int size)
+{
+  /* tag: "ALLOC"/"FREE"/"REALLOC" 등, opnum: 트레이스 op 번호, index/size: 해당 op 정보 */
+  char *heap_lo = (char *)mem_heap_lo();
+  char *heap_hi = (char *)mem_heap_hi();
+
+  printf("\n[%s #%d] index=%d size=%d  heap=[%p..%p] heapsize=%zu\n",
+         tag, opnum, index, size, heap_lo, heap_hi, mem_heapsize());
+
+  /* prologue 다음 bp부터 epilogue 전까지 선형 스캔 */
+  char *bp = heap_lo + 2 * WSIZE; /* 이 파일의 초기화 로직에선 prologue payload가 여기에 위치 */
+  while (bp < (char *)mem_heap_hi() + 1 - WSIZE) {
+    size_t hsize  = GET_SIZE(HDRP(bp));
+    int    halloc = GET_ALLOC(HDRP(bp));
+
+    /* free 블록이면 pred/succ도 함께 */
+    if (!halloc) {
+      char *pred = GET_PRED(bp);
+      char *succ = GET_SUCC(bp);
+      printf("  %p: blk(size=%zu, alloc=%d)  pred=%p succ=%p\n",
+             bp, hsize, halloc, pred, succ);
+    } else {
+      printf("  %p: blk(size=%zu, alloc=%d)\n", bp, hsize, halloc);
+    }
+
+    bp = NEXT_BLKP(bp);
+  }
+
+  /* 필요하면 일관성 검사 호출 */
+  mm_checkheap(opnum);
+}
+
+/* 최소한의 뼈대 – 원하면 더 엄격한 검사들을 넣어도 됩니다 */
+void mm_checkheap(int lineno)
+{
+  /* 예: 경계/정렬/헤더-풋터 일치, 인접한 free의 중복 여부, free 리스트 노드 검증 등 */
+  (void)lineno;
+}
 
 /* Map size → group index (대략 24,32,48,64,96,128,192,... 2배 근사) */
 static int size_to_group(size_t size)
