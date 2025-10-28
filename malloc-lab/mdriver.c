@@ -672,7 +672,7 @@ static int eval_mm_valid(trace_t *trace, int tracenum, range_t **ranges)
 			/* Remember region */
 			trace->blocks[index] = p;
 			trace->block_sizes[index] = size;
-			if (verbose > 1 && i % 1000 == 0) mm_heapdump("ALLOC", i, index, size);
+			if (verbose > 1 && i > 2000 && (i + 1) % 100 == 0) mm_heapdump("ALLOC", i, index, size);
 			break;
 
 		case REALLOC: /* mm_realloc */
@@ -714,7 +714,7 @@ static int eval_mm_valid(trace_t *trace, int tracenum, range_t **ranges)
 			/* Remember region */
 			trace->blocks[index] = newp;
 			trace->block_sizes[index] = size;
-			if (verbose > 1 && i % 1000 == 0) mm_heapdump("REALLOC", i, index, size);
+			if (verbose > 1 && i > 2000 && (i + 1) % 100 == 0) mm_heapdump("REALLOC", i, index, size);
 			break;
 
 		case FREE: /* mm_free */
@@ -723,7 +723,7 @@ static int eval_mm_valid(trace_t *trace, int tracenum, range_t **ranges)
 			p = trace->blocks[index];
 			remove_range(ranges, p);
 			mm_free(p);
-			if (verbose > 1 && i % 1000 == 0) mm_heapdump("FREE", i, index, 0);
+			if (verbose > 1 && i > 2000 && (i + 1) % 100 == 0) mm_heapdump("FREE", i, index, 0);
 			break;
 
 		default:
