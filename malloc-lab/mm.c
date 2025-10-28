@@ -1,11 +1,11 @@
 /*
  * mm-seg-explicit.c - Segregated explicit free lists (doubly linked)
  *
- * - 여러 개의 size class를 두고, 각 class마다 explicit free list를 유지
+ * - 여러 개의 size group을 두고, 각 group마다 explicit free list를 유지
  * - free 블록 payload에 pred/succ 포인터(각 8B)를 저장 (총 16B)
- * - 삽입: 해당 class 헤드에 LIFO
- * - 검색: 요청 크기에 해당하는 class부터 위로 올라가며 first-fit (옵션: 동일 class 내 best-fit)
- * - 병합(coalesce) 시 이웃 free 블록을 리스트에서 제거 → 사이즈 합치기 → 새 사이즈 class에 재삽입
+ * - 삽입: 해당 group 헤드에 LIFO
+ * - 검색: 요청 크기에 해당하는 group부터 위로 올라가며 first-fit (옵션: 동일 group 내 best-fit)
+ * - 병합(coalesce) 시 이웃 free 블록을 리스트에서 제거 → 사이즈 합치기 → 새 사이즈 group에 재삽입
  */
 
 #include <stdio.h>
@@ -36,7 +36,7 @@ team_t team = {
 /* Basic constants and macros */
 #define WSIZE       4               /* header/footer word size */
 #define DSIZE       8               /* double word */
-#define CHUNKSIZE   (1 << 12)       /* heap extend size: 4KB */
+#define CHUNKSIZE   (1 << 12)       /* heap extend size: 4KB (init-time) */
 #define MAX(x,y)    ((x) > (y) ? (x) : (y))
 
 /* Pack a size and allocated bit into a word */
@@ -74,8 +74,8 @@ team_t team = {
 #define NLISTS 16
 
 /* Globals */
-static char *heap_listp = NULL;         /* prologue payload pointer */
-static char *seg_free_lists[NLISTS];    /* heads of segregated explicit free lists */
+static char *pPrologueData = NULL;   /* prologue payload pointer */
+static char *headers[NLISTS];        /* heads of segregated explicit free lists */
 
 /* Internal helpers (prototypes) */
 static void *extend_heap(size_t words);
@@ -85,10 +85,13 @@ static void  place(void *bp, size_t asize);
 
 static void  insert_node(void *bp);
 static void  remove_node(void *bp);
-static int   size_to_class(size_t size);
+static int   size_to_group(size_t size);
 
-/* Map size → class index (대략 24,32,48,64,96,128,192,... 2배 근사) */
-static int size_to_class(size_t size)
+/* policy helpers */
+static size_t tail_free_size(void);
+
+/* Map size → group index (대략 24,32,48,64,96,128,192,... 2배 근사) */
+static int size_to_group(size_t size)
 {
     /* size는 헤더 포함 블록 크기 */
     if (size <= 32) return 0;           /* 24~32 */
@@ -112,18 +115,19 @@ static int size_to_class(size_t size)
 int mm_init(void)
 {
     /* 초기화: prologue(8B) + epilogue(4B) 프롤로그 설정 */
-    if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
+    if ((pPrologueData = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
 
-    PUT(heap_listp, 0);                            /* alignment padding */
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* prologue header */
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* prologue footer */
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* epilogue header */
-    heap_listp += (2 * WSIZE);
+    PUT(pPrologueData, 0);                            /* alignment padding */
+    PUT(pPrologueData + (1 * WSIZE), PACK(DSIZE, 1)); /* prologue header */
+    PUT(pPrologueData + (2 * WSIZE), PACK(DSIZE, 1)); /* prologue footer */
+    PUT(pPrologueData + (3 * WSIZE), PACK(0, 1));     /* epilogue header */
+    pPrologueData += (2 * WSIZE);
 
     for (int i = 0; i < NLISTS; ++i)
-        seg_free_lists[i] = NULL;
+        headers[i] = NULL;
 
+    /* 초기 부트스트랩: 첫 free 블록을 만들기 위해 CHUNKSIZE만큼 확장 */
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
 
@@ -135,6 +139,7 @@ static void *extend_heap(size_t words)
     char *bp;
     size_t size;
 
+    /* 8바이트 정렬 보장: 짝수 워드로 반올림 */
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
     if ((long)(bp = mem_sbrk(size)) == -1)
         return NULL;
@@ -147,33 +152,30 @@ static void *extend_heap(size_t words)
 }
 
 /* Insert at head of segregated list */
-static void insert_node(void *bp)
+static void insert_node(void *pEnteringNode)
 {
-    size_t size = GET_SIZE(HDRP(bp));
-    int c = size_to_class(size);
-
-    SET_PRED(bp, NULL);
-    SET_SUCC(bp, seg_free_lists[c]);
-
-    if (seg_free_lists[c] != NULL)
-        SET_PRED(seg_free_lists[c], bp);
-
-    seg_free_lists[c] = (char *)bp;
+    size_t size = GET_SIZE(HDRP(pEnteringNode));
+    int group = size_to_group(size);
+    SET_PRED(pEnteringNode, NULL);
+    SET_SUCC(pEnteringNode, headers[group]);
+    if (headers[group] != NULL)
+        SET_PRED(headers[group], pEnteringNode);
+    headers[group] = (char *)pEnteringNode;
 }
 
 /* Remove from its segregated list */
-static void remove_node(void *bp)
+static void remove_node(void *pTargetNode)
 {
-    size_t size = GET_SIZE(HDRP(bp));
-    int c = size_to_class(size);
+    size_t size = GET_SIZE(HDRP(pTargetNode));
+    int group = size_to_group(size);
 
-    char *pred = GET_PRED(bp);
-    char *succ = GET_SUCC(bp);
+    char *pred = GET_PRED(pTargetNode);
+    char *succ = GET_SUCC(pTargetNode);
 
     if (pred != NULL)
         SET_SUCC(pred, succ);
     else
-        seg_free_lists[c] = succ;
+        headers[group] = succ;
 
     if (succ != NULL)
         SET_PRED(succ, pred);
@@ -204,30 +206,48 @@ static void *coalesce(void *bp)
     return bp;
 }
 
+/* 힙 끝단(epilogue 바로 앞)의 free 블록 크기 반환, 없으면 0 */
+static size_t tail_free_size(void)
+{
+    /* mem_heap_hi()는 힙의 마지막 유효 바이트를 가리킴 */
+    char *ep_hdr = (char *)mem_heap_hi() + 1 - WSIZE;   /* epilogue header 주소 */
+    char *prev_ftr = ep_hdr - WSIZE;                    /* 직전 블록 footer */
+    size_t prev_size = GET_SIZE(prev_ftr);
+    char *prev_bp = prev_ftr + DSIZE - prev_size;       /* 직전 블록 bp */
+    int prev_alloc = GET_ALLOC(HDRP(prev_bp));
+    return prev_alloc ? 0 : prev_size;
+}
+
 void *mm_malloc(size_t size)
 {
     size_t asize;
-    size_t extendsize;
     char *bp;
 
-    if (size == 0)
-        return NULL;
+    if (size == 0) return NULL;
 
-    if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
-    if (asize < MIN_FREE_BLK)
-        asize = MIN_FREE_BLK;
+    /* 헤더/풋터 및 정렬 반영한 유효 크기 계산 */
+    if (size <= DSIZE) asize = 2 * DSIZE;
+    else asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+    if (asize < MIN_FREE_BLK) asize = MIN_FREE_BLK;
 
+    /* 1) 기존 가용 블록에서 먼저 시도 */
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize);
         return bp;
     }
 
-    extendsize = MAX(asize, CHUNKSIZE);
-    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
-        return NULL;
+    /* 2) 끝단 free 블록의 부족분만 확장 (CHUNKSIZE 하한 없음) */
+    size_t tail_free = tail_free_size();                 /* 없으면 0 */
+    size_t need = (asize > tail_free) ? (asize - tail_free) : 0;
+    if (need > 0) {
+        /* 바이트 → 워드; extend_heap이 짝수 워드 정렬을 보장 */
+        size_t words = (need + (WSIZE - 1)) / WSIZE;
+        if (extend_heap(words) == NULL)
+            return NULL;
+    }
+
+    /* 3) 확장/병합 이후엔 반드시 적합 블록이 존재해야 함 */
+    bp = find_fit(asize);
     place(bp, asize);
     return bp;
 }
@@ -257,6 +277,7 @@ void *mm_realloc(void *bp, size_t size)
     else asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
     if (asize < MIN_FREE_BLK) asize = MIN_FREE_BLK;
 
+    /* 축소 혹은 자투리 분할 */
     if (asize <= oldsize) {
         size_t remain = oldsize - asize;
         if (remain >= MIN_FREE_BLK) {
@@ -272,6 +293,7 @@ void *mm_realloc(void *bp, size_t size)
         return bp;
     }
 
+    /* 우측 인접 free와 병합해 확장 시도 */
     void *next = NEXT_BLKP(bp);
     if (!GET_ALLOC(HDRP(next))) {
         size_t capacity = oldsize + GET_SIZE(HDRP(next));
@@ -296,6 +318,7 @@ void *mm_realloc(void *bp, size_t size)
         }
     }
 
+    /* 새로 할당 후 복사 */
     void *newbp = mm_malloc(size);
     if (newbp == NULL) return NULL;
 
@@ -307,19 +330,19 @@ void *mm_realloc(void *bp, size_t size)
 }
 
 /* Find-fit over segregated lists:
- * - 요청 크기의 class부터 위로 올라가며 검색
- * - 같은 class 내에서는 first-fit (원하면 best-in-class로 바꿔도 됨)
+ * - 요청 크기의 group부터 위로 올라가며 검색
+ * - 같은 group 내에서는 first-fit (원하면 best-in-group으로 바꿔도 됨)
  */
 static void *find_fit(size_t asize)
 {
-    int c = size_to_class(asize);
+    int group = size_to_group(asize);
 
-    for (int i = c; i < NLISTS; ++i) {
-        for (char *bp = seg_free_lists[i]; bp != NULL; bp = GET_SUCC(bp)) {
-            size_t csize = GET_SIZE(HDRP(bp));
-            if (csize >= asize) {
-                /* 같은 class에서 정확히 맞으면 조기 종료(분할 오버헤드 최소화) */
-                /* if (csize == asize) return bp;  // 선택 사항 */
+    for (int i = group; i < NLISTS; ++i) {
+        for (char *bp = headers[i]; bp != NULL; bp = GET_SUCC(bp)) {
+            size_t gsize = GET_SIZE(HDRP(bp));
+            if (gsize >= asize) {
+                /* 같은 group에서 정확히 맞으면 조기 종료(분할 오버헤드 최소화) */
+                /* if (gsize == asize) return bp;  // 선택 사항 */
                 return bp;
             }
         }
@@ -329,23 +352,23 @@ static void *find_fit(size_t asize)
 
 static void place(void *bp, size_t asize)
 {
-    size_t csize = GET_SIZE(HDRP(bp));
+    size_t gsize = GET_SIZE(HDRP(bp));
     remove_node(bp);
 
-    if (csize - asize >= MIN_FREE_BLK) {
+    if (gsize - asize >= MIN_FREE_BLK) {
         /* 앞쪽을 할당, 뒤쪽을 free로 분할 */
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
 
         void *nbp = NEXT_BLKP(bp);
-        size_t rsize = csize - asize;
+        size_t rsize = gsize - asize;
         PUT(HDRP(nbp), PACK(rsize, 0));
         PUT(FTRP(nbp), PACK(rsize, 0));
         SET_PRED(nbp, NULL);
         SET_SUCC(nbp, NULL);
         insert_node(nbp);
     } else {
-        PUT(HDRP(bp), PACK(csize, 1));
-        PUT(FTRP(bp), PACK(csize, 1));
+        PUT(HDRP(bp), PACK(gsize, 1));
+        PUT(FTRP(bp), PACK(gsize, 1));
     }
 }
