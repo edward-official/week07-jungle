@@ -349,8 +349,9 @@ void *mm_malloc(size_t size)
     }
 
     /* 2) 끝단 free 블록의 부족분만 확장 (CHUNKSIZE 하한 없음) */
-    size_t freeSizeOfTail = getFreeSizeOfTail();                 /* 없으면 0 */
-    size_t lackingSize = (adjustedSize > freeSizeOfTail) ? (adjustedSize - freeSizeOfTail) : 0;
+    // size_t lackingSize = (adjustedSize > CHUNKSIZE) ? adjustedSize : CHUNKSIZE; // coalescing-bal.rep not considered ❌
+    size_t freeSizeOfTail = getFreeSizeOfTail();                 /* 없으면 0 */ // coalescing-bal.rep considered ✅
+    size_t lackingSize = (adjustedSize > freeSizeOfTail) ? (adjustedSize - freeSizeOfTail) : 0; // coalescing-bal.rep considered ✅
     if (lackingSize > 0) {
         /* 바이트 → 워드; extend_heap이 짝수 워드 정렬을 보장 */
         size_t nWord = (lackingSize + (WSIZE - 1)) / WSIZE;
