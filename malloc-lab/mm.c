@@ -106,17 +106,13 @@ static const char *col_dim(void){ return use_color() ? "\x1b[2m"      : ""; }
 static const char *col_rst(void){ return use_color() ? "\x1b[0m"      : ""; }
 
 static void print_rule(void) {
-  printf("%s------------------------------------------------------------------------------------%s\n",
-         col_dim(), col_rst());
+  printf("%s------------------------------------------------------------------------------------%s\n", col_dim(), col_rst());
 }
 
-static void print_header(const char *tag, int opnum, int index, int size,
-                         void *lo, void *hi, size_t heapsz) {
-  printf("\n%s[%s #%d] idx=%d size=%d%s  heap=[%p..%p] bytes=%zu\n",
-         col_h(), tag, opnum, index, size, col_rst(), lo, hi, heapsz);
+static void print_header(const char *tag, int opnum, int index, int size, void *lo, void *hi, size_t heapsz) {
+  printf("\n%s[%s #%d] idx=%d size=%d%s  heap=[%p..%p] bytes=%zu\n", col_h(), tag, opnum, index, size, col_rst(), lo, hi, heapsz);
   print_rule();
-  printf("%s%-14s %-10s %-7s %-14s %-14s%s\n",
-         col_dim(), "addr(bp)", "size", "alloc", "pred", "succ", col_rst());
+  printf("%s%-14s %-10s %-7s %-14s %-14s%s\n", col_dim(), "addr(bp)", "size", "alloc", "pred", "succ", col_rst());
   print_rule();
 }
 
@@ -125,27 +121,17 @@ static void print_row(char *bp) {
   int al = GET_ALLOC(HDRP(bp));
 
   if (al) {
-    printf("%s%#014lx%s  %-10zu %s%-7s%s  %-14s %-14s\n",
-           col_a(), (unsigned long)bp, col_rst(),
-           sz,
-           col_alloc(), "alloc", col_rst(),
-           "-", "-");
+    printf("%s%#014lx%s  %-10zu %s%-7s%s  %-14s %-14s\n", col_a(), (unsigned long)bp, col_rst(), sz, col_alloc(), "alloc", col_rst(), "-", "-");
   } else {
     char *pred = GET_PRED(bp);
     char *succ = GET_SUCC(bp);
-    printf("%s%#014lx%s  %-10zu %s%-7s%s  %-14p %-14p\n",
-           col_a(), (unsigned long)bp, col_rst(),
-           sz,
-           col_free(), "free", col_rst(),
-           (void*)pred, (void*)succ);
+    printf("%s%#014lx%s  %-10zu %s%-7s%s  %-14p %-14p\n", col_a(), (unsigned long)bp, col_rst(), sz, col_free(), "free", col_rst(), (void*)pred, (void*)succ);
   }
 }
 
-static void print_summary(size_t n_blk, size_t n_free,
-                          size_t free_bytes, size_t max_free) {
+static void print_summary(size_t n_blk, size_t n_free, size_t free_bytes, size_t max_free) {
   print_rule();
-  printf("blocks=%zu, free=%zu, free_bytes=%zu, largest_free=%zu\n",
-         n_blk, n_free, free_bytes, max_free);
+  printf("blocks=%zu, free=%zu, free_bytes=%zu, largest_free=%zu\n", n_blk, n_free, free_bytes, max_free);
 }
 
 /* 너무 길 때 중간은 접어서 표시. 필요 시 CFLAGS로 -DDUMP_MAX_ROWS=60 등 지정 */
@@ -175,10 +161,7 @@ void mm_heapdump(const char *tag, int opnum, int index, int size)
   /* (선택) 세그리 리스트 머리 포인터 요약 */
   print_free_overview(headers, NLISTS);
 
-  /* 여러분 초기화 흐름에 맞춰: 첫 실제 블록은 prologue 다음 */
   char *first = NEXT_BLKP(pPrologueData);
-
-  /* 총 블록 수 계산(에필로그의 size==0까지) */
   size_t total = 0;
   for (char *p = first; GET_SIZE(HDRP(p)) != 0; p = NEXT_BLKP(p)) total++;
 
@@ -190,10 +173,7 @@ void mm_heapdump(const char *tag, int opnum, int index, int size)
 
   for (char *bp = first; GET_SIZE(HDRP(bp)) != 0; bp = NEXT_BLKP(bp), idx++) {
     /* 중간 생략 표시 */
-    if (total > max_rows && idx == head_keep) {
-      printf("%s... (%zu rows omitted) ...%s\n",
-             col_dim(), total - max_rows, col_rst());
-    }
+    if (total > max_rows && idx == head_keep) printf("%s... (%zu rows omitted) ...%s\n", col_dim(), total - max_rows, col_rst());
     if (total > max_rows && idx > head_keep && idx < total - tail_keep) continue;
 
     print_row(bp);
